@@ -16,5 +16,8 @@ Terraform provider for managing groups and access in the Canonical Hook Service.
 
 ### Optional
 
+- `client_id` (String) OAuth2 client ID for client credentials authentication. Can also be set with the HOOK_SERVICE_CLIENT_ID environment variable. Requires client_secret and token_url.
+- `client_secret` (String, Sensitive) OAuth2 client secret for client credentials authentication. Can also be set with the HOOK_SERVICE_CLIENT_SECRET environment variable. Requires client_id and token_url.
 - `host` (String) The Hook Service API host URL (e.g. http://10.0.0.1:8000). Can also be set with the HOOK_SERVICE_HOST environment variable.
-- `token` (String, Sensitive) Bearer token for API authentication. Can also be set with the HOOK_SERVICE_TOKEN environment variable.
+- `token` (String, Sensitive) Bearer token for API authentication. Can also be set with the HOOK_SERVICE_TOKEN environment variable. Mutually exclusive with client_id/client_secret/token_url.
+- `token_url` (String) OAuth2 token endpoint URL (e.g. https://<hydra-host>/oauth2/token). Can also be set with the HOOK_SERVICE_TOKEN_URL environment variable. Requires client_id and client_secret.
