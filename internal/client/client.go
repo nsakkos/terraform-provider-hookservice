@@ -21,6 +21,7 @@ type Client struct {
 // NewClient creates a new Hook Service API client.
 func NewClient(host, token string) *Client {
 	host = strings.TrimRight(host, "/")
+	token = strings.TrimSpace(token)
 	return &Client{
 		Host:       host,
 		Token:      token,
