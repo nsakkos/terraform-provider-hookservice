@@ -149,7 +149,7 @@ func (p *HookServiceProvider) Configure(ctx context.Context, req provider.Config
 			ClientSecret: clientSecret,
 			TokenURL:     tokenURL,
 		}
-		httpClient := oauthConfig.Client(ctx)
+		httpClient := oauthConfig.Client(context.Background())
 
 		c := client.NewClientWithHTTPClient(host, httpClient)
 		resp.DataSourceData = c
