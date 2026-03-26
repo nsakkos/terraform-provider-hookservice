@@ -14,16 +14,63 @@ A Terraform provider for managing groups and access in the [Canonical Hook Servi
 terraform {
   required_providers {
     hookservice = {
-      source  = "canonical/hookservice"
+      source  = "nsakkos/hookservice"
       version = "~> 0.1"
     }
   }
 }
+```
 
+The provider supports two authentication methods.
+
+### Option 1: OAuth2 Client Credentials (recommended)
+
+Use this when the Hook Service is integrated with an OAuth2 provider (e.g. Hydra). The provider fetches and refreshes tokens automatically — no manual token management required.
+
+```hcl
+provider "hookservice" {
+  host          = "http://<hook-service-ip>:8000"
+  client_id     = var.client_id
+  client_secret = var.client_secret
+  token_url     = "https://<hydra-host>/oauth2/token"
+}
+```
+
+**Setup:**
+
+1. Create a `client_credentials` OAuth2 client in Hydra:
+
+```shell
+juju run hydra/leader create-oauth-client \
+  --grant-types=["client_credentials"] \
+  --scope=[openid] \
+  --token-endpoint-auth-method client_secret_basic \
+  --name "terraform-hookservice"
+```
+
+2. Allow the client to call the Hook Service API:
+
+```shell
+juju config hook-service \
+  authn_allowed_subjects="<client_id>" \
+  authn_allowed_scope="hook_service"
+```
+
+### Option 2: Static Bearer Token
+
+Use this for quick testing or when OAuth2 is not configured.
+
+```hcl
 provider "hookservice" {
   host  = "http://<hook-service-ip>:8000"
-  token = var.hook_service_token  # optional, for authenticated APIs
+  token = var.hook_service_token
 }
+```
+
+Obtain a short-lived token via the Juju action:
+
+```shell
+export HOOK_SERVICE_TOKEN=$(juju run hook-service/0 get-access-token --format=json | jq -r '.["hook-service/0"].results.token')
 ```
 
 ### Configuration Reference
@@ -31,15 +78,12 @@ provider "hookservice" {
 | Argument | Description | Required | Environment Variable |
 |----------|-------------|----------|---------------------|
 | `host` | The Hook Service API URL (e.g. `http://10.0.0.1:8000`) | Yes | `HOOK_SERVICE_HOST` |
-| `token` | Bearer token for API authentication | No | `HOOK_SERVICE_TOKEN` |
+| `client_id` | OAuth2 client ID for client credentials flow | No* | `HOOK_SERVICE_CLIENT_ID` |
+| `client_secret` | OAuth2 client secret for client credentials flow | No* | `HOOK_SERVICE_CLIENT_SECRET` |
+| `token_url` | OAuth2 token endpoint URL | No* | `HOOK_SERVICE_TOKEN_URL` |
+| `token` | Static bearer token | No* | `HOOK_SERVICE_TOKEN` |
 
-### Obtaining a Token
-
-If you have the `oauth` relation set up with your Hook Service charm, obtain a token with:
-
-```shell
-export HOOK_SERVICE_TOKEN=$(juju run hook-service/0 get-access-token --format=json | jq -r '.["hook-service/0"].results.token')
-```
+\* `client_id`, `client_secret`, and `token_url` must all be set together. `token` is mutually exclusive with the client credentials fields.
 
 ## Resources
 
