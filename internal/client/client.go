@@ -29,6 +29,16 @@ func NewClient(host, token string) *Client {
 	}
 }
 
+// NewClientWithHTTPClient creates a new Hook Service API client with a custom HTTP client.
+// Used with OAuth2 client credentials flow where the HTTP client handles token management.
+func NewClientWithHTTPClient(host string, httpClient *http.Client) *Client {
+	host = strings.TrimRight(host, "/")
+	return &Client{
+		Host:       host,
+		HTTPClient: httpClient,
+	}
+}
+
 // APIResponse represents a standard API response wrapper.
 type APIResponse struct {
 	Data    json.RawMessage `json:"data"`

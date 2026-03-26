@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"golang.org/x/oauth2/clientcredentials"
 )
 
 var _ provider.Provider = &HookServiceProvider{}
@@ -22,8 +23,11 @@ type HookServiceProvider struct {
 
 // HookServiceProviderModel describes the provider data model.
 type HookServiceProviderModel struct {
-	Host  types.String `tfsdk:"host"`
-	Token types.String `tfsdk:"token"`
+	Host         types.String `tfsdk:"host"`
+	Token        types.String `tfsdk:"token"`
+	ClientID     types.String `tfsdk:"client_id"`
+	ClientSecret types.String `tfsdk:"client_secret"`
+	TokenURL     types.String `tfsdk:"token_url"`
 }
 
 // New returns a new provider factory function.
@@ -51,9 +55,29 @@ func (p *HookServiceProvider) Schema(_ context.Context, _ provider.SchemaRequest
 			},
 			"token": schema.StringAttribute{
 				Description: "Bearer token for API authentication. " +
-					"Can also be set with the HOOK_SERVICE_TOKEN environment variable.",
+					"Can also be set with the HOOK_SERVICE_TOKEN environment variable. " +
+					"Mutually exclusive with client_id/client_secret/token_url.",
 				Optional:  true,
 				Sensitive: true,
+			},
+			"client_id": schema.StringAttribute{
+				Description: "OAuth2 client ID for client credentials authentication. " +
+					"Can also be set with the HOOK_SERVICE_CLIENT_ID environment variable. " +
+					"Requires client_secret and token_url.",
+				Optional: true,
+			},
+			"client_secret": schema.StringAttribute{
+				Description: "OAuth2 client secret for client credentials authentication. " +
+					"Can also be set with the HOOK_SERVICE_CLIENT_SECRET environment variable. " +
+					"Requires client_id and token_url.",
+				Optional:  true,
+				Sensitive: true,
+			},
+			"token_url": schema.StringAttribute{
+				Description: "OAuth2 token endpoint URL (e.g. https://<hydra-host>/oauth2/token). " +
+					"Can also be set with the HOOK_SERVICE_TOKEN_URL environment variable. " +
+					"Requires client_id and client_secret.",
+				Optional: true,
 			},
 		},
 	}
@@ -76,12 +100,60 @@ func (p *HookServiceProvider) Configure(ctx context.Context, req provider.Config
 		token = config.Token.ValueString()
 	}
 
+	clientID := os.Getenv("HOOK_SERVICE_CLIENT_ID")
+	if !config.ClientID.IsNull() {
+		clientID = config.ClientID.ValueString()
+	}
+
+	clientSecret := os.Getenv("HOOK_SERVICE_CLIENT_SECRET")
+	if !config.ClientSecret.IsNull() {
+		clientSecret = config.ClientSecret.ValueString()
+	}
+
+	tokenURL := os.Getenv("HOOK_SERVICE_TOKEN_URL")
+	if !config.TokenURL.IsNull() {
+		tokenURL = config.TokenURL.ValueString()
+	}
+
 	if host == "" {
 		resp.Diagnostics.AddError(
 			"Missing Hook Service Host",
 			"The provider requires a host to be set either in the provider configuration "+
 				"block or via the HOOK_SERVICE_HOST environment variable.",
 		)
+		return
+	}
+
+	hasToken := token != ""
+	hasClientCreds := clientID != "" || clientSecret != "" || tokenURL != ""
+
+	if hasToken && hasClientCreds {
+		resp.Diagnostics.AddError(
+			"Conflicting Authentication",
+			"Specify either token or client_id/client_secret/token_url, not both.",
+		)
+		return
+	}
+
+	if hasClientCreds {
+		if clientID == "" || clientSecret == "" || tokenURL == "" {
+			resp.Diagnostics.AddError(
+				"Incomplete Client Credentials",
+				"All three of client_id, client_secret, and token_url must be set for OAuth2 client credentials authentication.",
+			)
+			return
+		}
+
+		oauthConfig := clientcredentials.Config{
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+			TokenURL:     tokenURL,
+		}
+		httpClient := oauthConfig.Client(ctx)
+
+		c := client.NewClientWithHTTPClient(host, httpClient)
+		resp.DataSourceData = c
+		resp.ResourceData = c
 		return
 	}
 
