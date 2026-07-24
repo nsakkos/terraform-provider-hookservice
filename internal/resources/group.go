@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/canonical/terraform-provider-hookservice/internal/client"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -14,8 +15,9 @@ import (
 )
 
 var (
-	_ resource.Resource              = &GroupResource{}
-	_ resource.ResourceWithConfigure = &GroupResource{}
+	_ resource.Resource                = &GroupResource{}
+	_ resource.ResourceWithConfigure   = &GroupResource{}
+	_ resource.ResourceWithImportState = &GroupResource{}
 )
 
 // GroupResource manages a Hook Service group.
@@ -168,4 +170,8 @@ func (r *GroupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 		resp.Diagnostics.AddError("Error deleting group", err.Error())
 		return
 	}
+}
+
+func (r *GroupResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

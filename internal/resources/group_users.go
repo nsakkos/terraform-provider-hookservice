@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/canonical/terraform-provider-hookservice/internal/client"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -13,8 +14,9 @@ import (
 )
 
 var (
-	_ resource.Resource              = &GroupUsersResource{}
-	_ resource.ResourceWithConfigure = &GroupUsersResource{}
+	_ resource.Resource                = &GroupUsersResource{}
+	_ resource.ResourceWithConfigure   = &GroupUsersResource{}
+	_ resource.ResourceWithImportState = &GroupUsersResource{}
 )
 
 // GroupUsersResource manages the set of users belonging to a Hook Service group.
@@ -211,6 +213,38 @@ func (r *GroupUsersResource) Delete(ctx context.Context, req resource.DeleteRequ
 			return
 		}
 	}
+}
+
+func (r *GroupUsersResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	groupID := strings.TrimSpace(req.ID)
+	if groupID == "" {
+		resp.Diagnostics.AddError(
+			"Invalid Import ID",
+			"The import ID must be the group ID, e.g.: terraform import hookservice_group_users.example <group_id>",
+		)
+		return
+	}
+
+	// Import adopts all users currently in the group; after import, users not
+	// listed in the configuration will be planned for removal.
+	users, err := r.client.GetGroupUsers(groupID)
+	if err != nil {
+		resp.Diagnostics.AddError("Error reading group users", err.Error())
+		return
+	}
+
+	sort.Strings(users)
+	emails, diags := types.SetValueFrom(ctx, types.StringType, users)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	state := GroupUsersResourceModel{
+		GroupID: types.StringValue(groupID),
+		Emails:  emails,
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
 
 func extractEmails(ctx context.Context, model GroupUsersResourceModel) ([]string, diag.Diagnostics) {

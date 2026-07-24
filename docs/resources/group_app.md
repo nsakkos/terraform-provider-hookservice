@@ -19,3 +19,12 @@ Grants a group access to an application in the Hook Service.
 
 - `client_id` (String) The OAuth client ID of the application to grant access to.
 - `group_id` (String) The ID of the group.
+
+## Import
+
+Group app access can be imported using a composite ID in the format
+`<group_id>:<client_id>`:
+
+```shell
+terraform import hookservice_group_app.example 019ca0f2-b403-7723-94ed-95ac786b91cf:my-oauth-client-id
+```

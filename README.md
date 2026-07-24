@@ -115,6 +115,14 @@ resource "hookservice_group" "engineering" {
 |-----------|-------------|
 | `id` | The unique identifier of the group (assigned by the API) |
 
+#### Import
+
+Groups created outside Terraform can be imported using the group ID:
+
+```shell
+terraform import hookservice_group.engineering 019ca0f2-b403-7723-94ed-95ac786b91cf
+```
+
 ---
 
 ### `hookservice_group_users`
@@ -141,6 +149,16 @@ resource "hookservice_group_users" "engineering_members" {
 | `group_id` | The ID of the group | Yes |
 | `emails` | Set of user email addresses to add to the group | Yes |
 
+#### Import
+
+Group memberships can be imported using the group ID:
+
+```shell
+terraform import hookservice_group_users.engineering_members 019ca0f2-b403-7723-94ed-95ac786b91cf
+```
+
+Import adopts **all** users currently in the group. After importing, run `terraform plan` and reconcile your configuration's `emails` with the imported state — any user present in the group but missing from your configuration will be planned for removal.
+
 ---
 
 ### `hookservice_group_app`
@@ -162,6 +180,14 @@ resource "hookservice_group_app" "engineering_app" {
 |----------|-------------|----------|
 | `group_id` | The ID of the group | Yes |
 | `client_id` | The OAuth client ID of the application | Yes |
+
+#### Import
+
+Group app access can be imported using a composite ID in the format `<group_id>:<client_id>`:
+
+```shell
+terraform import hookservice_group_app.engineering_app 019ca0f2-b403-7723-94ed-95ac786b91cf:my-oauth-client-id
+```
 
 ---
 

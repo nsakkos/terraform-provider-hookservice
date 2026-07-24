@@ -19,3 +19,16 @@ Manages the users belonging to a group in the Hook Service.
 
 - `emails` (Set of String) The set of user email addresses to add to the group.
 - `group_id` (String) The ID of the group.
+
+## Import
+
+Group memberships can be imported using the group ID:
+
+```shell
+terraform import hookservice_group_users.example 019ca0f2-b403-7723-94ed-95ac786b91cf
+```
+
+Import adopts **all** users currently in the group. After importing, run
+`terraform plan` and reconcile your configuration's `emails` with the imported
+state — any user present in the group but missing from your configuration will
+be planned for removal.

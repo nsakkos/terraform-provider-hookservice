@@ -3,16 +3,19 @@ package resources
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/canonical/terraform-provider-hookservice/internal/client"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 var (
-	_ resource.Resource              = &GroupAppResource{}
-	_ resource.ResourceWithConfigure = &GroupAppResource{}
+	_ resource.Resource                = &GroupAppResource{}
+	_ resource.ResourceWithConfigure   = &GroupAppResource{}
+	_ resource.ResourceWithImportState = &GroupAppResource{}
 )
 
 // GroupAppResource manages access for a group to an application.
@@ -150,4 +153,20 @@ func (r *GroupAppResource) Delete(ctx context.Context, req resource.DeleteReques
 		resp.Diagnostics.AddError("Error removing app access from group", err.Error())
 		return
 	}
+}
+
+func (r *GroupAppResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// The group ID is a UUID and never contains a colon, so split on the
+	// first colon to allow client IDs that contain colons.
+	parts := strings.SplitN(req.ID, ":", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		resp.Diagnostics.AddError(
+			"Invalid Import ID",
+			fmt.Sprintf("The import ID must be in the format <group_id>:<client_id>, got: %q", req.ID),
+		)
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("group_id"), parts[0])...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("client_id"), parts[1])...)
 }

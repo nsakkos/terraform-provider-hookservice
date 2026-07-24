@@ -27,3 +27,11 @@ Manages a group in the Hook Service.
 ### Read-Only
 
 - `id` (String) The unique identifier of the group.
+
+## Import
+
+Groups can be imported using the group ID:
+
+```shell
+terraform import hookservice_group.example 019ca0f2-b403-7723-94ed-95ac786b91cf
+```
