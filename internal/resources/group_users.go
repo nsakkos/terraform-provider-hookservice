@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -45,6 +48,13 @@ func (r *GroupUsersResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			"group_id": schema.StringAttribute{
 				Description: "The ID of the group.",
 				Required:    true,
+				PlanModifiers: []planmodifier.String{
+					// Membership is scoped to one group: pointing at a different
+					// group is a new resource, not an update. Without this the
+					// Update path diffs the email set against itself, finds no
+					// changes, and silently leaves the new group empty.
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"emails": schema.SetAttribute{
 				Description: "The set of user email addresses to add to the group.",
@@ -102,6 +112,12 @@ func (r *GroupUsersResource) Read(ctx context.Context, req resource.ReadRequest,
 
 	users, err := r.client.GetGroupUsers(state.GroupID.ValueString())
 	if err != nil {
+		// The group was deleted outside Terraform: treat the membership as gone
+		// instead of erroring, which would block every subsequent plan.
+		if errors.Is(err, client.ErrNotFound) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("Error reading group users", err.Error())
 		return
 	}
@@ -181,10 +197,11 @@ func (r *GroupUsersResource) Update(ctx context.Context, req resource.UpdateRequ
 		}
 	}
 
-	// Remove old users.
+	// Remove old users. group_id cannot change here (it forces replacement), but
+	// use the state value so removals can never target a different group.
 	for _, e := range stateEmails {
 		if !planSet[e] {
-			if err := r.client.RemoveGroupUser(plan.GroupID.ValueString(), e); err != nil {
+			if err := r.client.RemoveGroupUser(state.GroupID.ValueString(), e); err != nil {
 				resp.Diagnostics.AddError("Error removing user from group", err.Error())
 				return
 			}

@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -93,6 +94,12 @@ func (r *GroupAppResource) Read(ctx context.Context, req resource.ReadRequest, r
 
 	apps, err := r.client.GetGroupApps(state.GroupID.ValueString())
 	if err != nil {
+		// The group was deleted outside Terraform: treat the grant as gone
+		// instead of erroring, which would block every subsequent plan.
+		if errors.Is(err, client.ErrNotFound) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
 		resp.Diagnostics.AddError("Error reading group apps", err.Error())
 		return
 	}

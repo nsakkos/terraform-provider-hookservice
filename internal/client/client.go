@@ -3,13 +3,20 @@ package client
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
 const apiBasePath = "/api/v0"
+
+// ErrNotFound is returned when the API reports that the addressed resource does
+// not exist. Callers should treat it as "gone" and drop the resource from state
+// rather than surfacing it as an error, which would block every future plan.
+var ErrNotFound = errors.New("not found")
 
 // Client is an HTTP client for the Hook Service API.
 type Client struct {
@@ -46,6 +53,13 @@ type APIResponse struct {
 	Status  int             `json:"status,omitempty"`
 }
 
+// hasData reports whether the response carried a usable `data` payload. The
+// Hook Service omits `data` entirely for empty collections, and decoding an
+// absent payload would otherwise fail with "unexpected end of JSON input".
+func (r APIResponse) hasData() bool {
+	return len(bytes.TrimSpace(r.Data)) > 0
+}
+
 // Group represents a group in the Hook Service.
 type Group struct {
 	ID          string `json:"id"`
@@ -64,6 +78,14 @@ type GroupCreateRequest struct {
 // AppAccessRequest represents the request body for granting app access.
 type AppAccessRequest struct {
 	ClientID string `json:"client_id"`
+}
+
+// pathSegment escapes a caller-supplied value for safe interpolation into a
+// single URL path segment. Without this, values containing `/`, `#`, `%` or
+// whitespace (group IDs, emails, OAuth client IDs) would alter the request
+// path rather than being sent as data.
+func pathSegment(s string) string {
+	return url.PathEscape(s)
 }
 
 func (c *Client) doRequest(method, path string, body interface{}) ([]byte, int, error) {
@@ -120,6 +142,10 @@ func (c *Client) ListGroups() ([]Group, error) {
 		return nil, fmt.Errorf("error decoding response: %w", err)
 	}
 
+	if !apiResp.hasData() {
+		return []Group{}, nil
+	}
+
 	var groups []Group
 	if err := json.Unmarshal(apiResp.Data, &groups); err != nil {
 		return nil, fmt.Errorf("error decoding groups: %w", err)
@@ -164,7 +190,7 @@ func (c *Client) CreateGroup(name, description, groupType string) (*Group, error
 
 // GetGroup retrieves a single group by ID.
 func (c *Client) GetGroup(groupID string) (*Group, error) {
-	respBody, statusCode, err := c.doRequest(http.MethodGet, fmt.Sprintf("/authz/groups/%s", groupID), nil)
+	respBody, statusCode, err := c.doRequest(http.MethodGet, fmt.Sprintf("/authz/groups/%s", pathSegment(groupID)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -182,10 +208,18 @@ func (c *Client) GetGroup(groupID string) (*Group, error) {
 		return nil, fmt.Errorf("error decoding response: %w", err)
 	}
 
+	if !apiResp.hasData() {
+		return nil, nil
+	}
+
 	// The response may return a single group or an array with one group.
 	// Try array first (consistent with create response), then single object.
 	var groups []Group
-	if err := json.Unmarshal(apiResp.Data, &groups); err == nil && len(groups) > 0 {
+	if err := json.Unmarshal(apiResp.Data, &groups); err == nil {
+		// An empty array means the group is gone, same as a 404.
+		if len(groups) == 0 {
+			return nil, nil
+		}
 		return &groups[0], nil
 	}
 
@@ -199,7 +233,7 @@ func (c *Client) GetGroup(groupID string) (*Group, error) {
 
 // DeleteGroup deletes a group by ID.
 func (c *Client) DeleteGroup(groupID string) error {
-	respBody, statusCode, err := c.doRequest(http.MethodDelete, fmt.Sprintf("/authz/groups/%s", groupID), nil)
+	respBody, statusCode, err := c.doRequest(http.MethodDelete, fmt.Sprintf("/authz/groups/%s", pathSegment(groupID)), nil)
 	if err != nil {
 		return err
 	}
@@ -211,11 +245,16 @@ func (c *Client) DeleteGroup(groupID string) error {
 	return nil
 }
 
-// GetGroupUsers retrieves all users in a group.
+// GetGroupUsers retrieves all users in a group. It returns ErrNotFound if the
+// group itself no longer exists.
 func (c *Client) GetGroupUsers(groupID string) ([]string, error) {
-	respBody, statusCode, err := c.doRequest(http.MethodGet, fmt.Sprintf("/authz/groups/%s/users", groupID), nil)
+	respBody, statusCode, err := c.doRequest(http.MethodGet, fmt.Sprintf("/authz/groups/%s/users", pathSegment(groupID)), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if statusCode == http.StatusNotFound {
+		return nil, ErrNotFound
 	}
 
 	if statusCode != http.StatusOK {
@@ -225,6 +264,11 @@ func (c *Client) GetGroupUsers(groupID string) ([]string, error) {
 	var apiResp APIResponse
 	if err := json.Unmarshal(respBody, &apiResp); err != nil {
 		return nil, fmt.Errorf("error decoding response: %w", err)
+	}
+
+	if !apiResp.hasData() {
+		// No `data` field means the group has no members.
+		return []string{}, nil
 	}
 
 	var users []string
@@ -250,7 +294,7 @@ func (c *Client) GetGroupUsers(groupID string) ([]string, error) {
 
 // AddGroupUsers adds users to a group.
 func (c *Client) AddGroupUsers(groupID string, emails []string) error {
-	respBody, statusCode, err := c.doRequest(http.MethodPost, fmt.Sprintf("/authz/groups/%s/users", groupID), emails)
+	respBody, statusCode, err := c.doRequest(http.MethodPost, fmt.Sprintf("/authz/groups/%s/users", pathSegment(groupID)), emails)
 	if err != nil {
 		return err
 	}
@@ -264,7 +308,7 @@ func (c *Client) AddGroupUsers(groupID string, emails []string) error {
 
 // RemoveGroupUser removes a user from a group.
 func (c *Client) RemoveGroupUser(groupID, email string) error {
-	respBody, statusCode, err := c.doRequest(http.MethodDelete, fmt.Sprintf("/authz/groups/%s/users/%s", groupID, email), nil)
+	respBody, statusCode, err := c.doRequest(http.MethodDelete, fmt.Sprintf("/authz/groups/%s/users/%s", pathSegment(groupID), pathSegment(email)), nil)
 	if err != nil {
 		return err
 	}
@@ -276,11 +320,16 @@ func (c *Client) RemoveGroupUser(groupID, email string) error {
 	return nil
 }
 
-// GetGroupApps retrieves all apps for a group.
+// GetGroupApps retrieves all apps for a group. It returns ErrNotFound if the
+// group itself no longer exists.
 func (c *Client) GetGroupApps(groupID string) ([]string, error) {
-	respBody, statusCode, err := c.doRequest(http.MethodGet, fmt.Sprintf("/authz/groups/%s/apps", groupID), nil)
+	respBody, statusCode, err := c.doRequest(http.MethodGet, fmt.Sprintf("/authz/groups/%s/apps", pathSegment(groupID)), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if statusCode == http.StatusNotFound {
+		return nil, ErrNotFound
 	}
 
 	if statusCode != http.StatusOK {
@@ -290,6 +339,11 @@ func (c *Client) GetGroupApps(groupID string) ([]string, error) {
 	var apiResp APIResponse
 	if err := json.Unmarshal(respBody, &apiResp); err != nil {
 		return nil, fmt.Errorf("error decoding response: %w", err)
+	}
+
+	if !apiResp.hasData() {
+		// No `data` field means the group has no apps.
+		return []string{}, nil
 	}
 
 	var clientIDs []string
@@ -316,7 +370,7 @@ func (c *Client) GetGroupApps(groupID string) ([]string, error) {
 func (c *Client) AddGroupApp(groupID, clientID string) error {
 	reqBody := AppAccessRequest{ClientID: clientID}
 
-	respBody, statusCode, err := c.doRequest(http.MethodPost, fmt.Sprintf("/authz/groups/%s/apps", groupID), reqBody)
+	respBody, statusCode, err := c.doRequest(http.MethodPost, fmt.Sprintf("/authz/groups/%s/apps", pathSegment(groupID)), reqBody)
 	if err != nil {
 		return err
 	}
@@ -330,7 +384,7 @@ func (c *Client) AddGroupApp(groupID, clientID string) error {
 
 // RemoveGroupApp removes an application from a group.
 func (c *Client) RemoveGroupApp(groupID, clientID string) error {
-	respBody, statusCode, err := c.doRequest(http.MethodDelete, fmt.Sprintf("/authz/groups/%s/apps/%s", groupID, clientID), nil)
+	respBody, statusCode, err := c.doRequest(http.MethodDelete, fmt.Sprintf("/authz/groups/%s/apps/%s", pathSegment(groupID), pathSegment(clientID)), nil)
 	if err != nil {
 		return err
 	}

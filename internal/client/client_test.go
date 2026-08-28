@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -470,5 +471,163 @@ func TestNoAuthHeader_WhenTokenEmpty(t *testing.T) {
 	_, err := c.ListGroups()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// emptyDataResponse writes an envelope with no `data` key at all, which is what
+// the gRPC-gateway emits for empty repeated fields (protojson omits unpopulated
+// fields unless EmitUnpopulated is set).
+func emptyDataResponse(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write([]byte(`{"status":200,"message":"ok"}`)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestGetGroupUsers_AbsentData(t *testing.T) {
+	srv, c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		emptyDataResponse(t, w)
+	})
+	defer srv.Close()
+
+	users, err := c.GetGroupUsers("g1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(users) != 0 {
+		t.Errorf("expected no users, got %v", users)
+	}
+}
+
+func TestGetGroupApps_AbsentData(t *testing.T) {
+	srv, c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		emptyDataResponse(t, w)
+	})
+	defer srv.Close()
+
+	apps, err := c.GetGroupApps("g1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(apps) != 0 {
+		t.Errorf("expected no apps, got %v", apps)
+	}
+}
+
+func TestListGroups_AbsentData(t *testing.T) {
+	srv, c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		emptyDataResponse(t, w)
+	})
+	defer srv.Close()
+
+	groups, err := c.ListGroups()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(groups) != 0 {
+		t.Errorf("expected no groups, got %v", groups)
+	}
+}
+
+func TestGetGroup_AbsentData(t *testing.T) {
+	srv, c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		emptyDataResponse(t, w)
+	})
+	defer srv.Close()
+
+	group, err := c.GetGroup("g1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if group != nil {
+		t.Errorf("expected nil group, got %+v", group)
+	}
+}
+
+func TestCreateGroup_AbsentData(t *testing.T) {
+	srv, c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		emptyDataResponse(t, w)
+	})
+	defer srv.Close()
+
+	if _, err := c.CreateGroup("x", "y", "local"); err == nil {
+		t.Fatal("expected create to fail loudly when no group is returned")
+	}
+}
+
+func TestGetGroupUsers_ObjectPayload(t *testing.T) {
+	srv, c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte(`{"data":[{"id":"a@b.com"},{"id":"c@d.com"}],"status":200}`)); err != nil {
+			t.Fatal(err)
+		}
+	})
+	defer srv.Close()
+
+	users, err := c.GetGroupUsers("g1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(users) != 2 || users[0] != "a@b.com" || users[1] != "c@d.com" {
+		t.Errorf("unexpected users: %v", users)
+	}
+}
+
+func TestGetGroup_EmptyArray(t *testing.T) {
+	srv, c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		jsonResponse(t, w, http.StatusOK, []Group{})
+	})
+	defer srv.Close()
+
+	group, err := c.GetGroup("g1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if group != nil {
+		t.Errorf("expected nil group for empty array, got %+v", group)
+	}
+}
+
+func TestGetGroupUsers_NotFound(t *testing.T) {
+	srv, c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer srv.Close()
+
+	if _, err := c.GetGroupUsers("gone"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestGetGroupApps_NotFound(t *testing.T) {
+	srv, c := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	defer srv.Close()
+
+	if _, err := c.GetGroupApps("gone"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestRemoveGroupUser_EscapesPathSegments(t *testing.T) {
+	var gotPath string
+	srv, c := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		w.WriteHeader(http.StatusOK)
+	})
+	defer srv.Close()
+
+	// A value containing a slash must not be able to alter the request path.
+	if err := c.RemoveGroupUser("g1", "../../admin@example.com"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := "/api/v0/authz/groups/g1/users/..%2F..%2Fadmin@example.com"
+	if gotPath != want {
+		t.Errorf("expected escaped path %q, got %q", want, gotPath)
 	}
 }
